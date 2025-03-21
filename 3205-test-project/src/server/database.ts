@@ -5,11 +5,11 @@ import { Url } from "./models/Url.ts";
 
 const sequelize = new Sequelize(
   {
-    database: "postgres",
+    database: process.env.POSTGRES_DATABASE,
     dialect: "postgres",
-    host: "localhost",
-    username: "admin",
-    password: "admin",
+    host: process.env.POSTGRES_HOST,
+    username: process.env.POSTGRES_USERNAME,
+    password: process.env.POSTGRES_PASSWORD,
     logging: false,
     models: [
       Hash,

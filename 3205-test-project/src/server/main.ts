@@ -2,6 +2,7 @@ import express, { Request } from "express";
 import ViteExpress from "vite-express";
 import short from "short-uuid";
 import { CronJob } from "cron";
+import "dotenv/config";
 
 import { initializeDatabase } from "./database.ts";
 import { Hash } from "./models/Hash.ts";
@@ -136,7 +137,7 @@ app.delete("/delete/:shortUrl", async (req: Request<{ shortUrl: string }>, resp)
 
 await initializeDatabase();
 const job = new CronJob(
-  "0 2 * * *", // every day at 2am UTC+0
+  process.env.CRON_EXPIRED_JOBS_CLEANUP || "0 2 * * *", // Default to everyday at 2am UTC+0
   async () => {
     console.log("Cleanup expired records");
     const currentDate = new Date();
@@ -154,8 +155,8 @@ const job = new CronJob(
       await Hash.destroy({
         where: {
           shortUrl: url.shortUrl,
-        }
-      })
+        },
+      });
     }
     await Url.destroy({
       where: {
