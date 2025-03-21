@@ -1,6 +1,23 @@
 import express, { Request } from "express";
 import ViteExpress from "vite-express";
+import { Sequelize } from "sequelize";
 import short from "short-uuid";
+
+// `docker compose up -d`
+// Дождаться пока откроется `localhost:8080`
+// Ввести admin@example.com admin, раскрыть Servers (это БД)
+
+// TODO:
+// - [ ] Подключиться к postgres через Sequelize https://sequelize.org/ (все пароли и т.д. в `docker-compose.yaml`)
+// - [ ] Заменить хранение значений из `cache` на postgres
+// - [ ] Сделать TODO описанные ниже в коде
+// - [ ] Реализовать frontend
+// - [ ] Реализовать тесты
+// - [ ] (дополнительное задание) Реализовать таблицу статистики переходов
+// - [ ] (опционально) Добавить redis в docker-compose
+// - [ ] (опционально) Продублировать туда хранение кэшированных значений с определенным TTL (Time to life)
+
+// const sequelize = new Sequelize("postgres://admin:admin/postgres")
 
 const app = express();
 
