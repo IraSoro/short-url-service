@@ -1,37 +1,17 @@
 import express, { Request } from "express";
 import ViteExpress from "vite-express";
-import { Sequelize } from "sequelize";
 import short from "short-uuid";
+import { CronJob } from "cron";
 
-// `docker compose up -d`
-// Дождаться пока откроется `localhost:8080`
-// Ввести admin@example.com admin, раскрыть Servers (это БД)
+import { initializeDatabase } from "./database.ts";
+import { Hash } from "./models/Hash.ts";
+import { Url } from "./models/Url.ts";
+import { Op } from "sequelize";
+import { Redirection } from "./models/Redirection.ts";
 
 // TODO:
-// - [ ] Подключиться к postgres через Sequelize https://sequelize.org/ (все пароли и т.д. в `docker-compose.yaml`)
-// - [ ] Заменить хранение значений из `cache` на postgres
-// - [ ] Сделать TODO описанные ниже в коде
 // - [ ] Реализовать frontend
 // - [ ] Реализовать тесты
-// - [ ] (дополнительное задание) Реализовать таблицу статистики переходов
-// - [ ] (опционально) Добавить redis в docker-compose
-// - [ ] (опционально) Продублировать туда хранение кэшированных значений с определенным TTL (Time to life)
-
-// const sequelize = new Sequelize("postgres://admin:admin/postgres")
-
-const app = express();
-
-app.use(express.json());
-
-// TODO: Вот это поменять на Postgres
-const cache = new Map<string, {
-  originalUrl: string;
-  shortUrl: string;
-  createdAt: string;
-  clickCount: number;
-}>();
-
-const translator = short();
 
 async function calculateSHA256FromUrl(url: string) {
   const originalUrlAsBuffer = new TextEncoder().encode(url);
@@ -39,6 +19,11 @@ async function calculateSHA256FromUrl(url: string) {
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map((item) => item.toString(16).padStart(2, "0")).join("");
 }
+
+const app = express();
+const translator = short();
+
+app.use(express.json());
 
 // POST /shorten: принимает JSON с полями:
 // - originalUrl (обязательное) - исходный URL,
@@ -48,88 +33,144 @@ async function calculateSHA256FromUrl(url: string) {
 // curl --request POST --header "Content-Type: application/json" --data '{ "originalUrl":"https://www.npmjs.com/package/vite-express" }' localhost:3000/shorten
 // curl --request POST --header "Content-Type: application/json" --data '{ "originalUrl":"https://www.npmjs.com/package/vite-express", "alias":"123" }' localhost:3000/shorten
 // curl --request POST --header "Content-Type: application/json" --data '{ "originalUrl":"https://www.npmjs.com/package/vite-express", "alias":"123", "expiresAt": "Thu, 20 Mar 2025 21:12:00 GMT" }' localhost:3000/shorten
-app.post("/shorten", async (req: Request<{}, {}, {
-  originalUrl: string;
-  expiresAt?: string;
-  alias?: string;
-}>, resp) => {
-  // TODO: Добавить expiresAt, возможно через БД
+app.post("/shorten", async (req: Request<{}, {}, { originalUrl: string; expiresAt?: string; alias?: string; }>, resp) => {
   const hash = await calculateSHA256FromUrl(req.body.originalUrl);
-  if (cache.has(hash)) {
-    resp.send(cache.get(hash));
-    return;
-  }
-
-  if (req.body.alias) {
-    // TODO: Добавить проверку на длину
-    // TODO: Не знаю что делать, если уже еть в БД, но пользователь прислал alias, возвращать alias или перезаписывать на alias
-    cache.set(hash, {
-      originalUrl: req.body.originalUrl,
-      shortUrl: req.body.alias,
-      clickCount: 0,
-      createdAt: new Date().toUTCString(),
-    });
-    resp.send(req.body.alias)
-    return;
-  }
-
-  const shortUrl = translator.generate();
-  cache.set(hash, {
-    originalUrl: req.body.originalUrl,
-    shortUrl: shortUrl,
-    clickCount: 0,
-    createdAt: new Date().toUTCString(),
+  const foundRecord = await Hash.findOne({
+    where: { hash: hash },
+    include: [{
+      model: Url,
+      attributes: ["shortUrl"],
+    }],
   });
-  resp.send(shortUrl);
-})
+  if (foundRecord) {
+    return resp.status(200).send(foundRecord.shortUrl);
+  }
+
+  if (req.body.alias && req.body.alias.length >= 20) {
+    return resp.status(400).send("Alias should contain less than 20 characters");
+  }
+
+  const url = await Url.create({
+    shortUrl: req.body.alias || translator.generate(),
+    originalUrl: req.body.originalUrl,
+    clickCount: 0,
+    expiresAt: req.body.expiresAt ? new Date(req.body.expiresAt) : undefined,
+  });
+
+  await Hash.create({
+    hash: hash,
+    shortUrl: url.shortUrl,
+    url: url,
+  });
+
+  resp.status(201).send(url.shortUrl);
+});
 
 // GET /{shortUrl}: переадресует пользователя на оригинальный URL.
 // Если ссылка не найдена, возвращает ошибку 404.
 // curl localhost:3000/gKGqnUMEYPQ8Z76izrRacC
-app.get("/:shortUrl", (req: Request<{ shortUrl: string}>, resp) => {
-  for (const [key, value] of cache) {
-    if (value.shortUrl === req.params.shortUrl) {
-      value.clickCount++;
-      cache.set(key, value);
-      resp.redirect(308, value.originalUrl);
-      return;
-    }
+app.get("/:shortUrl", async (req: Request<{ shortUrl: string }>, resp) => {
+  const url = await Url.findOne({ where: { shortUrl: req.params.shortUrl } });
+  if (!url) {
+    return resp.status(404).send("Error: Can't find short url");
   }
-  resp.status(404).send("Error: Can't find short url");
-})
+  url.clickCount++;
+  await url.save();
+  await Redirection.create({
+    ipAddress: req.ip || "",
+    shortUrl: url.shortUrl,
+  });
+  return resp.redirect(308, url.originalUrl);
+});
 
 // GET /info/{shortUrl}: возвращает информацию о сокращённой ссылке:
 // originalUrl (оригинальная ссылка),
 // createdAt (дата создания),
 // clickCount (количество переходов по короткой ссылке).
 // curl localhost:3000/info/gKGqnUMEYPQ8Z76izrRacC
-app.get("/info/:shortUrl", (req: Request<{ shortUrl: string}>, resp) => {
-  for (const [key, value] of cache) {
-    if (value.shortUrl === req.params.shortUrl) {
-      resp.status(200).json({
-        originalUrl: value.originalUrl,
-        createdAt: value.createdAt,
-        clickCount: value.clickCount,
-      });
-      return
-    }
+app.get("/info/:shortUrl", async (req: Request<{ shortUrl: string }>, resp) => {
+  const url = await Url.findOne({ where: { shortUrl: req.params.shortUrl } });
+  if (!url) {
+    return resp.status(404).send("Error: Can't find short url");
   }
-  resp.status(404).send("Error: Can't find short url");
+  return resp.status(200).json({
+    originalUrl: url.originalUrl,
+    createdAt: url.createdAt,
+    clickCount: url.clickCount,
+  });
 });
+
+app.get("/analytics/:shortUrl", async(req: Request<{ shortUrl: string}>, resp) => {
+  const url = await Url.findOne({ where: { shortUrl: req.params.shortUrl }});
+  if (!url) {
+    return resp.status(404).send("Error: Can't find short url");
+  }
+  const redirects = await Redirection.findAll({
+    where: { shortUrl: req.params.shortUrl },
+    order: [
+      ["createdAt", "DESC"],
+    ],
+    limit: 5,
+    attributes: ["ipAddress"]
+  });
+  return resp.status(200).json({
+    clickCount: url.clickCount,
+    ipAddresses: redirects.map((redirection) => redirection.ipAddress),
+  });
+})
 
 // DELETE /delete/{shortUrl}: удаляет короткую ссылку.
 // curl --request DELETE localhost:3000/delete/gKGqnUMEYPQ8Z76izrRacC
-app.delete("/delete/:shortUrl", (req: Request<{ shortUrl: string}>, resp) => {
-  for (const [key, value] of cache) {
-    if (value.shortUrl === req.params.shortUrl) {
-      cache.delete(key);
-      resp.status(200).send();
+app.delete("/delete/:shortUrl", async (req: Request<{ shortUrl: string }>, resp) => {
+  const deletedHash = await Hash.destroy({
+    where: { shortUrl: req.params.shortUrl },
+  });
+  if (!deletedHash) {
+    return resp.status(404).send("Error: Can't find short url");
+  }
+  await Url.destroy({
+    where: { shortUrl: req.params.shortUrl },
+  });
+  return resp.status(200).send();
+});
+
+await initializeDatabase();
+const job = new CronJob(
+  "0 2 * * *", // every day at 2am UTC+0
+  async () => {
+    console.log("Cleanup expired records");
+    const currentDate = new Date();
+    const urls = await Url.findAll({
+      where: {
+        expiresAt: {
+          [Op.lt]: currentDate,
+        },
+      }
+    })
+    if (urls.length === 0) {
       return;
     }
-  }
-  resp.status(404).send("Error: Can't find short url");
-})
-
+    for (const url of urls) {
+      await Hash.destroy({
+        where: {
+          shortUrl: url.shortUrl,
+        }
+      })
+    }
+    await Url.destroy({
+      where: {
+        expiresAt: {
+          [Op.lt]: currentDate,
+        }
+      }
+    })
+    console.log(`Deleted ${urls.length} records`);
+  },
+  null, // onComplete
+  true, // start
+  "Etc/UTC",
+);
+job.start();
 ViteExpress.listen(app, 3000, () =>
-  console.log("Server is listening on port 3000..."),
+  console.log("Server is listening on port 3000...")
 );
