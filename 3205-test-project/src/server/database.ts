@@ -20,11 +20,22 @@ const sequelize = new Sequelize(
 );
 
 export async function initializeDatabase() {
-  try {
-    await sequelize.authenticate();
-    await sequelize.sync();
-    console.log("Connected to PostgreSQL");
-  } catch (error) {
-    console.error("Unable to connect to the database:", error);
+  const maxAttempts = 10;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    console.warn(`Connection to database attempt ${attempt} of ${maxAttempts}`);
+    try {
+      await sequelize.authenticate();
+      await sequelize.sync();
+      console.log("Connected to PostgreSQL");
+      break;
+    } catch (error) {
+      if (attempt == maxAttempts) {
+        throw error;
+      }
+      console.error("FAILED");
+      await new Promise<void>((resolve) => setTimeout(() => {
+        resolve();
+      }, 10 * 1000));
+    }
   }
 }
