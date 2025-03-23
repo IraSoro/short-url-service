@@ -81,6 +81,8 @@ app.get("/:shortUrl", async (req: Request<{ shortUrl: string }>, resp) => {
     ipAddress: req.ip || "",
     shortUrl: url.shortUrl,
   });
+  // NOTE: Browser may cache redirection, so we should explicitly set `no-store` here
+  resp.set("Cache-Control", "no-store");
   return resp.redirect(308, url.originalUrl);
 });
 
