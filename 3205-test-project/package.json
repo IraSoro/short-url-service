@@ -9,6 +9,10 @@
     "build": "vite build"
   },
   "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.0",
+    "@mui/icons-material": "^6.4.8",
+    "@mui/material": "^6.4.8",
     "cron": "^4.1.0",
     "cross-env": "^7.0.3",
     "dotenv": "^16.4.7",
