@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Button,
   Container,
@@ -16,13 +16,50 @@ import {
 } from "@mui/material";
 import Grid from "@mui/material/Grid2";
 
-const InfoTable = () => {
+interface ShortUrlProps {
+  shortUrl: string;
+}
+
+const InfoTable = (props: ShortUrlProps) => {
+  const [originalUrl, setOriginalUrl] = useState("");
+  const [createdAt, setCreatedAt] = useState("");
+  const [clickCount, setClickCount] = useState(0);
+
+  useEffect(() => {
+    if (props.shortUrl === "") return;
+
+    const fetchInfo = async () => {
+      try {
+        const response = await fetch(`/info/${props.shortUrl}`, {
+          method: "GET",
+        });
+
+        if (response.status === 404) {
+          throw new Error(
+            `Server returned 404 status code [${
+              response.status
+            }]: ${await response.text()}`
+          );
+        }
+
+        const data = await response.json();
+        setOriginalUrl(data.originalUrl);
+        setCreatedAt(data.createdAt);
+        setClickCount(data.clickCount);
+      } catch (error) {
+        console.error("Error fetching URL info:", error);
+      }
+    };
+
+    fetchInfo();
+  }, [props.shortUrl]);
+
   return (
     <>
       <Typography variant="h6" sx={{ mt: 2, textAlign: "left" }}>
         Additional Information:
       </Typography>
-      <TableContainer component={Paper}>
+      <TableContainer component={Paper} elevation={0} sx={{ mt: 1 }}>
         <Table>
           <TableBody>
             <TableRow>
@@ -30,22 +67,22 @@ const InfoTable = () => {
               <TableCell>
                 <Typography
                   component="a"
-                  href={"originalUrl"}
+                  href={originalUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   color="primary"
                 >
-                  originalUrl
+                  {originalUrl}
                 </Typography>
               </TableCell>
             </TableRow>
             <TableRow>
               <TableCell>Creation Date</TableCell>
-              <TableCell>{new Date().toLocaleString()}</TableCell>
+              <TableCell>{createdAt}</TableCell>
             </TableRow>
             <TableRow>
               <TableCell>Click Count</TableCell>
-              <TableCell>10</TableCell>
+              <TableCell>{clickCount}</TableCell>
             </TableRow>
           </TableBody>
         </Table>
@@ -54,41 +91,58 @@ const InfoTable = () => {
   );
 };
 
-const StatisticTable = () => {
-  const analytics = [
-    { date: "2025-03-22T14:30:00", ip: "192.168.1.1" },
-    { date: "2025-03-22T15:00:00", ip: "192.168.1.2" },
-    { date: "2025-03-22T15:30:00", ip: "192.168.1.3" },
-    { date: "2025-03-22T16:00:00", ip: "192.168.1.4" },
-    { date: "2025-03-22T16:30:00", ip: "192.168.1.5" },
-  ];
+const StatisticTable = (props: ShortUrlProps) => {
+  const [ipAddresses, setIpAddresses] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (props.shortUrl === "") return;
+
+    const fetchAnalytics = async () => {
+      try {
+        const response = await fetch(`/analytics/${props.shortUrl}`, {
+          method: "GET",
+        });
+
+        if (response.status === 404) {
+          throw new Error(
+            `Server returned 404 status code [${
+              response.status
+            }]: ${await response.text()}`
+          );
+        }
+
+        const data = await response.json();
+        setIpAddresses(data.ipAddresses);
+      } catch (error) {
+        console.error("Error fetching analytics:", error);
+      }
+    };
+
+    fetchAnalytics();
+  }, [props.shortUrl]);
 
   return (
     <>
       <Typography variant="h6" sx={{ mt: 2, textAlign: "left" }}>
-        Click Statistics:
+        Statistics:
       </Typography>
-      <TableContainer component={Paper} sx={{ mt: 1 }}>
+      <TableContainer component={Paper} elevation={0} sx={{ mt: 1 }}>
         <Table>
           <TableBody>
             <TableRow>
               <TableCell>
-                <strong>Date</strong>
-              </TableCell>
-              <TableCell>
                 <strong>IP Address</strong>
               </TableCell>
             </TableRow>
-            {analytics.length > 0 ? (
-              analytics.map((entry, index) => (
+            {ipAddresses.length > 0 ? (
+              ipAddresses.map((ip, index) => (
                 <TableRow key={index}>
-                  <TableCell>{new Date(entry.date).toLocaleString()}</TableCell>
-                  <TableCell>{entry.ip}</TableCell>
+                  <TableCell>{ip}</TableCell>
                 </TableRow>
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={2}>No data available</TableCell>
+                <TableCell colSpan={1}>No data available</TableCell>
               </TableRow>
             )}
           </TableBody>
@@ -103,23 +157,80 @@ function App() {
   const [alias, setAlias] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
   const [shortUrl, setShortUrl] = useState("");
+
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState("");
-  const [showInfo, setShowInfo] = useState(false);
 
-  const handleShorten = async () => {
-    setShortUrl("http://localhost:3000/shorten");
-    try {
-      setSnackbarMessage("URL successfully shortened!");
-    } catch (error) {
-      setSnackbarMessage("Error shortening the URL");
-    }
-    setSnackbarOpen(true);
+  const clearInputs = () => {
+    setUrl("");
+    setAlias("");
+    setExpiresAt("");
   };
 
-  const handleDelete = () => {
-    setShortUrl("");
-    setSnackbarMessage("Short URL deleted.");
+  const handleShorten = async () => {
+    if (url === "") {
+      setSnackbarMessage("URL field is empty");
+      setSnackbarOpen(true);
+      return;
+    }
+
+    try {
+      const response = await fetch("/shorten", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          originalUrl: url,
+          alias: alias || undefined,
+          expiresAt: expiresAt || undefined,
+        }),
+      });
+
+      if (response.status === 400) {
+        throw new Error(
+          `Server returned 400 status code [${
+            response.status
+          }]: ${await response.text()}`
+        );
+      }
+
+      if (response.status === 200) {
+        setSnackbarMessage("The URL has already been shorted");
+        setSnackbarOpen(true);
+      }
+
+      const shortUrl = await response.text();
+      setShortUrl(shortUrl);
+      clearInputs();
+    } catch (error) {
+      console.error("Error shortening URL:", error);
+      setSnackbarMessage("Error shortening URL");
+      setSnackbarOpen(true);
+    }
+  };
+
+  const handleDelete = async () => {
+    try {
+      const response = await fetch(`/delete/${shortUrl}`, {
+        method: "DELETE",
+      });
+
+      if (response.status !== 200) {
+        throw new Error(
+          `Server returned non-200 status code [${
+            response.status
+          }]: ${await response.text()}`
+        );
+      }
+
+      setShortUrl("");
+      setSnackbarMessage("Short URL deleted successfully.");
+      clearInputs();
+    } catch (error) {
+      console.error("Error deleting URL:", error);
+      setSnackbarMessage("An error occurred while deleting the URL.");
+    }
     setSnackbarOpen(true);
   };
 
@@ -172,56 +283,49 @@ function App() {
               </Typography>
               {shortUrl && (
                 <>
-                  <Typography
-                    variant="h6"
-                    color="primary"
-                    component="a"
-                    href={shortUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <Box
+                    sx={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                    }}
                   >
-                    {shortUrl}
-                  </Typography>
-                  {!showInfo ? (
-                    <Button
-                      onClick={() => setShowInfo(true)}
-                      variant="text"
+                    <Typography
+                      variant="h6"
                       color="primary"
-                      sx={{ alignSelf: "flex-end" }}
+                      component="a"
+                      href={shortUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
                     >
-                      Show more
+                      {shortUrl}
+                    </Typography>
+                    <Button
+                      onClick={handleDelete}
+                      variant="outlined"
+                      color="error"
+                    >
+                      Delete
                     </Button>
-                  ) : (
-                    <>
-                      <Box sx={{ width: "100%", textAlign: "left" }}>
-                        <InfoTable />
-                        <StatisticTable />
-                      </Box>
-                    </>
-                  )}
-
-                  <Button
-                    onClick={handleDelete}
-                    variant="text"
-                    color="error"
-                    sx={{ alignSelf: "flex-end", mt: 2 }}
-                  >
-                    Delete
-                  </Button>
+                  </Box>
+                  <Box sx={{ width: "100%", textAlign: "left" }}>
+                    <InfoTable shortUrl={shortUrl} />
+                    <StatisticTable shortUrl={shortUrl} />
+                  </Box>
                 </>
               )}
             </Stack>
           </Grid>
         </Grid>
       </Container>
-      {/* 
+
       <Snackbar
         open={snackbarOpen}
         autoHideDuration={3000}
         onClose={() => setSnackbarOpen(false)}
       >
         <div>{snackbarMessage}</div>
-      </Snackbar> */}
+      </Snackbar>
     </div>
   );
 }

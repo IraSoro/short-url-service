@@ -11,7 +11,6 @@ import { Op } from "sequelize";
 import { Redirection } from "./models/Redirection.ts";
 
 // TODO:
-// - [ ] Реализовать frontend
 // - [ ] Реализовать тесты
 
 async function calculateSHA256FromUrl(url: string) {
